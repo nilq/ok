@@ -225,7 +225,7 @@ with love
 #define %s
 #line 0
 %s]]
-      vs = arg1 and (string.format fmt, "#version #{versions[gl_version], "VERTEX", vc}") or nil
+      vs = arg1 and (string.format fmt, "#version #{versions[gl_version]}", "VERTEX", "vc") or nil
       ps = arg2 and (string.format fmt, versions[gl_version], "PIXEL", pc) or nil
 
       vs, ps
@@ -240,4 +240,110 @@ with love
 
   ok.update_shader = (shader) ->
     ok._active_shader = shader
-  
+
+  ok.push = (which) ->
+    stack = ok._state.stack
+
+    assert #stack < 64, "stack overflow - too deep, fucked up - please pop"
+
+    if #stack == 0
+      table.insert stack, {
+        projection: false
+        matrix: cpml.mat4!
+        active_shader: ok._active_shader
+      }
+    else
+      top = stack[#stack]
+
+      new = {
+        projection: top.projection
+        matrix: top.matrix\clone!
+        active_shader: top.active_shader
+      }
+
+      if "all" == which
+        new.active_shader = top.active_shader
+
+      table.insert stack, new
+
+    ok._state.stack_top = stack[#stack]
+
+  ok.pop = ->
+    stack = ok._state.stack
+
+    assert #stack > 1, "stack underflow - popped a lot"
+
+    table.remove stack
+
+    top = stack[#stack]
+
+    ok._state.stack_top = top
+
+  ok.translate = (x, y, z) ->
+    top = ok._state.stack_top
+    top.matrix = top.matrix\translate cpml.vec3 x, y, z or 0
+
+  ok.rotate = (r, axis) ->
+    top = ok._state.stack_top
+
+    if "table" == type r and r.w
+      top.matrix = top.matrix\rotate r
+      return
+
+    assert "number" == type r
+
+    top.matrix = top.matrix\rotate r, axis or cpml.vec3.unit_z
+
+  ok.scale = (x, y, z) ->
+    top = ok._state.stack_top
+    top.matrix = top.matrix\scale x, y, z or 1
+
+  ok.origin = ->
+    top = ok._state.stack_top
+    top.matrix = top.matrix\identity!
+
+  ok.get_matrix = ->
+    ok._state.stack_top.matrix
+
+  ok.update_matrix = (matrix_type, m) ->
+    unless ok._active_shader return
+
+    local w, h
+
+    if "projection" == matrix_type
+      w, h = .graphics.getDimensions!
+
+    send_m = m or "projection" == matrix_type and (cpml.mat4!\ortho 0, w, 0, h, -100, 100) or ok.get_matrix!
+
+    ok._active_shader\send matrix_type == "transform" and "u_model" or "u_projection", send_m\to_vec4s!
+
+    if "projection" == matrix_type
+      ok._state.stack_top.projection = true
+
+  ok.new_triangles = (t, offset=(cpml.vec3 0, 0, 0), mesh, usage) ->
+    data, indices = {}, {}
+
+    for k, v in pairs t
+      current = {}
+
+      table.insert current, v.x + offset.x
+      table.insert current, v.y + offset.y
+      table.insert current, v.z + offset.z
+
+      table.insert data, current
+
+      unless mesh
+        table.insert indices, k
+
+    unless mesh
+      layout = {
+        {"VertexPosition", "float", 3}
+      }
+
+      m = .graphics.newMesh layout, data, "triangles", usage or "static"
+      m\setVertexMap indices
+
+      return m
+    else
+      mesh\setVertices data if mesh.setVertices
+      return mesh
